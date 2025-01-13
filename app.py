@@ -22,6 +22,7 @@ mongo_uri = os.getenv("MONGO_URI")
 client = MongoClient(mongo_uri) 
 db = client['attendance_system']
 punch_collection = db['punch_records']
+users_collection = db['users']
 
 
 # Geofence center and radius
@@ -217,11 +218,19 @@ LOGIN_PAGE = """
             <label for="username">Select Username:</label>
             <select id="username" name="username" required>
                 <option value="" selected disabled>Select User</option>
-                <option value="u_Nirav">Nirav</option>
-                <option value="u_Vikram">Vikram</option>
-                <option value="u_Mitesh">Mitesh</option>
-                <option value="u_Test">Test</option>
-                <option value="admin">Admin</option>
+                <!-- Regular Users Section -->
+                <optgroup label="Users">
+                    {% for user in users %}
+                        <option value="{{ user }}">{{ user }}</option>
+                    {% endfor %}
+                </optgroup>
+
+                <!-- Admins Section -->
+                <optgroup label="Admins">
+                    {% for admin in admins %}
+                        <option value="{{ admin }}">{{ admin }}</option>
+                    {% endfor %}
+                </optgroup>
             </select>
             
             <label for="password">Password:</label>
@@ -230,7 +239,7 @@ LOGIN_PAGE = """
             <button type="submit">Login</button>
         </form>
         {% if error %}
-        <p style="color: red;">{{ error }}</p>
+            <p style="color: red;">{{ error }}</p>
         {% endif %}
     </div>
 </body>
@@ -1143,18 +1152,38 @@ def update_status():
 
 @app.route("/", methods=["GET", "POST"])
 def login():
-    global logged_in_user
+    users = {}
+    admins = {}
+
+    # Fetch users from MongoDB
+    user_data = users_collection.find({"role": "user"}, {"_id": 0, "username": 1, "password": 1})
+    for user in user_data:
+        users[user["username"]] = {"password": user["password"], "role": "user"}
+
+    # Fetch admins from MongoDB
+    admin_data = users_collection.find({"role": "admin"}, {"_id": 0, "username": 1, "password": 1})
+    for admin in admin_data:
+        admins[admin["username"]] = {"password": admin["password"], "role": "admin"}
+
+   
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
         
-        if username in users and users[username] == password:
-            logged_in_user = username
-            if username == "admin":
-                return redirect("/admin")
-            return redirect("/main")
-        return render_template_string(LOGIN_PAGE, error="Invalid credentials")
-    return render_template_string(LOGIN_PAGE)
+        if username in users and users[username]["password"] == password:
+            # Redirect based on the role
+            if users[username]["role"] == "admin":
+                return redirect(url_for("ADMIN_MENU_TEMPLATE"))
+            else:
+                return redirect(url_for("HTML_TEMPLATE"))
+        elif username in admins and admins[username]["password"] == password:
+            # Admin login
+            return redirect(url_for("ADMIN_TEMPLATE"))
+        else:
+            error = "Invalid username or password. Please try again."
+            return render_template_string(LOGIN_PAGE, error=error, users=users.keys(), admins=admins.keys())
+
+    return render_template_string(LOGIN_PAGE, users=users.keys(), admins=admins.keys())
 
 @app.route("/main")
 def main_page():
@@ -1169,7 +1198,7 @@ def main_page():
 def logout():
     global logged_in_user
     logged_in_user = None  # Clear the login state
-    return redirect(url_for("login"))
+    return redirect(url_for("LOGIN_PAGE"))
 
 
 @app.route("/get_geofence_status", methods=['POST'])
